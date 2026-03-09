@@ -1,0 +1,43 @@
+# Build directories
+build/
+build_viewer/
+cmake-build-debug/
+cmake-build-release/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+dist/
+*.egg
+
+# Test outputs
+*.bin
+!tools/_vectors/*.bin  # Keep golden test vectors
+test_output.txt
+
+# Project-specific
+*.log
+.cmake_tests/
+.claude/
+artifacts/_dev/
+
+# OS files
+Thumbs.db
+.DS_Store

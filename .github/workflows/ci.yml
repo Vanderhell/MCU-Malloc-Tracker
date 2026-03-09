@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Create build directory
+      run: mkdir build
+
+    - name: Configure CMake
+      working-directory: build
+      run: cmake ..
+
+    - name: Build
+      working-directory: build
+      run: cmake --build . --config Debug
+
+    - name: Run selftest_phase2
+      working-directory: build
+      run: cmake --build . --target snapshot_demo --config Debug
+      shell: bash
+
+  code-quality:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Check for trailing whitespace
+      run: |
+        if grep -r '[[:space:]]$' --include='*.c' --include='*.h' .; then
+          echo "Error: Trailing whitespace found"
+          exit 1
+        fi
+
+    - name: Check for TODO/FIXME
+      run: |
+        if grep -r 'TODO\|FIXME' src/ include/ --include='*.c' --include='*.h' | grep -v '// TODO' | wc -l | grep -v '^0$'; then
+          echo "Warning: Found TODO/FIXME comments in code"
+        fi
+
+    - name: Verify LICENSE exists
+      run: test -f LICENSE || (echo "Error: LICENSE file missing" && exit 1)
+
+    - name: Verify CHANGELOG exists
+      run: test -f CHANGELOG.md || (echo "Error: CHANGELOG.md file missing" && exit 1)
