@@ -67,7 +67,9 @@ jobs:
         fi
 
     - name: Verify LICENSE exists
-      run: test -f LICENSE || (echo "Error: LICENSE file missing" && exit 1)
+      run: |
+        test -f LICENSE || (echo "Error: LICENSE file missing" && exit 1)
 
     - name: Verify CHANGELOG exists
-      run: test -f CHANGELOG.md || (echo "Error: CHANGELOG.md file missing" && exit 1)
+      run: |
+        test -f CHANGELOG.md || (echo "Error: CHANGELOG.md file missing" && exit 1)
