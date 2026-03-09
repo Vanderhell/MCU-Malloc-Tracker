@@ -32,8 +32,14 @@ jobs:
       run: |
         if [ "$RUNNER_OS" = "Windows" ]; then
           ./Debug/selftest_phase2.exe
-        else
+        elif [ -f ./Debug/selftest_phase2 ]; then
           ./Debug/selftest_phase2
+        elif [ -f ./selftest_phase2 ]; then
+          ./selftest_phase2
+        else
+          echo "Error: selftest_phase2 executable not found"
+          find . -name "selftest_phase2*" -type f
+          exit 1
         fi
       shell: bash
 
@@ -42,8 +48,14 @@ jobs:
       run: |
         if [ "$RUNNER_OS" = "Windows" ]; then
           ./Debug/snapshot_demo.exe
-        else
+        elif [ -f ./Debug/snapshot_demo ]; then
           ./Debug/snapshot_demo
+        elif [ -f ./snapshot_demo ]; then
+          ./snapshot_demo
+        else
+          echo "Error: snapshot_demo executable not found"
+          find . -name "snapshot_demo*" -type f
+          exit 1
         fi
       shell: bash
 
