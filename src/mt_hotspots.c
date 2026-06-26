@@ -11,6 +11,7 @@
 #include <string.h>
 #include "../include/mt_config.h"
 #include "../include/mt_types.h"
+#include "../include/mt_hotspots.h"
 
 #if MT_ENABLE_HOTSPOTS
 

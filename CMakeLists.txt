@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.10)
-project(MCU_Malloc_Tracker C)
+project(MCU_Malloc_Tracker VERSION 0.1.0 LANGUAGES C)
+
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+include(CTest)
 
 # ============================================================================
 # Configuration
@@ -7,6 +11,7 @@ project(MCU_Malloc_Tracker C)
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
 
 # Default values for config (can be overridden from command line)
 if(NOT MT_MAX_ALLOCS)
@@ -50,11 +55,12 @@ add_library(mcu_malloc_tracker STATIC
 
 target_include_directories(mcu_malloc_tracker
     PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
 target_compile_definitions(mcu_malloc_tracker
-    PRIVATE
+    PUBLIC
         MT_MAX_ALLOCS=${MT_MAX_ALLOCS}
         MT_MAX_HOTSPOTS=${MT_MAX_HOTSPOTS}
         MT_ENABLE_SNAPSHOT=${MT_ENABLE_SNAPSHOT}
@@ -62,6 +68,12 @@ target_compile_definitions(mcu_malloc_tracker
         MT_ENABLE_LEAK_DUMP=${MT_ENABLE_LEAK_DUMP}
         MT_FILE_ID_MODE=${MT_FILE_ID_MODE}
 )
+
+set_target_properties(mcu_malloc_tracker PROPERTIES
+    EXPORT_NAME tracker
+)
+
+add_library(MCUMallocTracker::tracker ALIAS mcu_malloc_tracker)
 
 # ============================================================================
 # Self-Test Executable (Phase 2)
@@ -224,6 +236,106 @@ target_link_libraries(snapshot_demo
     PRIVATE
         mcu_malloc_tracker
 )
+
+# ============================================================================
+# Package install/export
+# ============================================================================
+
+set(MCUMallocTracker_INSTALL_CMAKEDIR "${CMAKE_INSTALL_LIBDIR}/cmake/MCUMallocTracker")
+
+install(TARGETS mcu_malloc_tracker
+    EXPORT MCUMallocTrackerTargets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+
+install(DIRECTORY include/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    FILES_MATCHING PATTERN "*.h"
+)
+
+install(EXPORT MCUMallocTrackerTargets
+    NAMESPACE MCUMallocTracker::
+    FILE MCUMallocTrackerTargets.cmake
+    DESTINATION ${MCUMallocTracker_INSTALL_CMAKEDIR}
+)
+
+configure_package_config_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/MCUMallocTrackerConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/MCUMallocTrackerConfig.cmake
+    INSTALL_DESTINATION ${MCUMallocTracker_INSTALL_CMAKEDIR}
+)
+
+write_basic_package_version_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/MCUMallocTrackerConfigVersion.cmake
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion
+)
+
+install(FILES
+    ${CMAKE_CURRENT_BINARY_DIR}/MCUMallocTrackerConfig.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/MCUMallocTrackerConfigVersion.cmake
+    DESTINATION ${MCUMallocTracker_INSTALL_CMAKEDIR}
+)
+
+# ============================================================================
+# Focused verification tests
+# ============================================================================
+
+function(mt_expect_compile_fail test_name source_path)
+    set(_obj_dir "${CMAKE_CURRENT_BINARY_DIR}/compile_fail/${test_name}")
+    file(MAKE_DIRECTORY "${_obj_dir}")
+
+    if(MSVC)
+        set(_obj "${_obj_dir}/${test_name}.obj")
+        execute_process(
+            COMMAND "${CMAKE_C_COMPILER}" /nologo /TC /c "${source_path}" /Fo"${_obj}" /I"${CMAKE_CURRENT_SOURCE_DIR}/include"
+            RESULT_VARIABLE _result
+            OUTPUT_VARIABLE _output
+            ERROR_VARIABLE _output
+        )
+    else()
+        set(_obj "${_obj_dir}/${test_name}.o")
+        execute_process(
+            COMMAND "${CMAKE_C_COMPILER}" -std=c99 -Wall -Wextra -Wpedantic -Werror -I"${CMAKE_CURRENT_SOURCE_DIR}/include" -c "${source_path}" -o "${_obj}"
+            RESULT_VARIABLE _result
+            OUTPUT_VARIABLE _output
+            ERROR_VARIABLE _output
+        )
+    endif()
+
+    if(_result EQUAL 0)
+        message(FATAL_ERROR "Expected compile failure for ${test_name}, but compilation succeeded")
+    endif()
+
+    message(STATUS "Compile-fail verified: ${test_name}")
+endfunction()
+
+if(BUILD_TESTING)
+    mt_expect_compile_fail(
+        invalid_hook_config
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/compile_fail_invalid_hook_config.c"
+    )
+
+    mt_expect_compile_fail(
+        invalid_wrapper_predefinition
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/compile_fail_invalid_wrapper_predefinition.c"
+    )
+
+    add_executable(wrapper_opt_out tests/wrapper_opt_out.c)
+    target_link_libraries(wrapper_opt_out PRIVATE mcu_malloc_tracker)
+    add_test(NAME wrapper_opt_out COMMAND wrapper_opt_out)
+
+    add_executable(wrapper_multitu
+        tests/wrapper_multitu_main.c
+        tests/wrapper_multitu_plain.c
+        tests/wrapper_multitu_wrapped.c
+    )
+    target_link_libraries(wrapper_multitu PRIVATE mcu_malloc_tracker)
+    add_test(NAME wrapper_multitu COMMAND wrapper_multitu)
+endif()
 
 # ============================================================================
 # MTV1 Streamer Selftest (optional — for advanced MTV1 workflow)

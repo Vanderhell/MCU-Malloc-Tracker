@@ -21,4 +21,20 @@ if "%1"=="" (
     exit /b 1
 )
 
-python "%PYTHON_SCRIPT%" %*
+where python3 >nul 2>nul && (
+    python3 "%PYTHON_SCRIPT%" %*
+    exit /b %errorlevel%
+)
+
+where python >nul 2>nul && (
+    python "%PYTHON_SCRIPT%" %*
+    exit /b %errorlevel%
+)
+
+where py >nul 2>nul && (
+    py "%PYTHON_SCRIPT%" %*
+    exit /b %errorlevel%
+)
+
+echo Error: python3, python, or py was not found in PATH.
+exit /b 1

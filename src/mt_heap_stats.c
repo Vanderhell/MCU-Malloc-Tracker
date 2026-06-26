@@ -14,12 +14,6 @@
 #include "../include/mt_api.h"
 #include "../include/mt_internal.h"
 
-/* Forward declarations for internal functions from mt_fragmentation.c */
-extern uint32_t mt_get_fragmentation(uint32_t* out_total_free, uint32_t* out_largest_free);
-extern int mt_frag_health_from_packed(uint32_t packed);  /* Returns enum as int */
-extern uint16_t mt_frag_permille_from_packed(uint32_t packed);
-extern int mt_frag_available_from_packed(uint32_t packed);
-
 /* ============================================================================
  * EXTENDED mt_stats() with Fragmentation
  * ============================================================================ */

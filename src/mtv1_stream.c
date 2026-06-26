@@ -2,139 +2,128 @@
  * MCU Malloc Tracker - MTV1 Streamer Implementation
  *
  * Send MTV1 frames with proper CRC32/IEEE and sequencing.
- * No malloc, callback-based.
+ * Contexts are caller-owned via the opaque handle returned by init/free.
  */
 
+#include <stdlib.h>
 #include <string.h>
 #include "../include/mtv1_config.h"
 #include "../include/mtv1_stream.h"
 #include "../include/mt_crc32_ieee.h"
 
-/* MTV1 streamer context (stack-allocated by user or embedded) */
-typedef struct mtv1_stream {
+struct mtv1_stream {
     mtv1_tx_fn tx_fn;
-    void*      tx_ctx;
-    uint32_t   seq_counter;
-} mtv1_stream_t;
+    void* tx_ctx;
+    uint32_t seq_counter;
+};
 
-/* Static context (one instance per MCU) */
-static mtv1_stream_t g_streamer = {0};
+static void mtv1_write_u16le(uint8_t* dst, uint16_t value)
+{
+    dst[0] = (uint8_t)(value & 0xFFu);
+    dst[1] = (uint8_t)((value >> 8) & 0xFFu);
+}
 
-/**
- * mtv1_stream_init(tx_fn, tx_ctx)
- * Initialize MTV1 streamer.
- */
+static void mtv1_write_u32le(uint8_t* dst, uint32_t value)
+{
+    dst[0] = (uint8_t)(value & 0xFFu);
+    dst[1] = (uint8_t)((value >> 8) & 0xFFu);
+    dst[2] = (uint8_t)((value >> 16) & 0xFFu);
+    dst[3] = (uint8_t)((value >> 24) & 0xFFu);
+}
+
 mtv1_stream_t* mtv1_stream_init(mtv1_tx_fn tx_fn, void* tx_ctx)
 {
     if (!tx_fn) {
         return NULL;
     }
 
-    g_streamer.tx_fn = tx_fn;
-    g_streamer.tx_ctx = tx_ctx;
-    g_streamer.seq_counter = 0;  /* Will be incremented to 1 on first call */
+    mtv1_stream_t* stream = (mtv1_stream_t*)malloc(sizeof(*stream));
+    if (!stream) {
+        return NULL;
+    }
 
-    return &g_streamer;
+    stream->tx_fn = tx_fn;
+    stream->tx_ctx = tx_ctx;
+    stream->seq_counter = 0;
+    return stream;
 }
 
-/**
- * mtv1_stream_next_seq()
- * Get and advance sequence counter.
- */
 uint32_t mtv1_stream_next_seq(mtv1_stream_t* stream)
 {
     if (!stream) {
         return 0;
     }
 
-    return ++stream->seq_counter;
+    if (stream->seq_counter == UINT32_MAX) {
+        stream->seq_counter = 0;
+    }
+
+    stream->seq_counter++;
+    return stream->seq_counter;
 }
 
-/**
- * mtv1_send_frame(stream, type, payload, payload_len)
- * Low-level frame sender (internal).
- * Returns 0 on success, -1 on error.
- */
 static int mtv1_send_frame(mtv1_stream_t* stream, uint8_t type, const uint8_t* payload, uint32_t payload_len)
 {
     if (!stream || !stream->tx_fn) {
         return -1;
     }
-
-    /* Validate payload length */
     if (payload_len > MTV1_TX_MAX_PAYLOAD) {
         return -1;
     }
+    if (payload_len > 0 && !payload) {
+        return -1;
+    }
 
-    /* Build frame header (20 bytes) */
     uint8_t frame_buf[20 + MTV1_TX_MAX_PAYLOAD];
-    mtv1_frame_hdr_t* hdr = (mtv1_frame_hdr_t*)frame_buf;
+    memset(frame_buf, 0, 20);
+    frame_buf[0] = 'M';
+    frame_buf[1] = 'T';
+    frame_buf[2] = 'V';
+    frame_buf[3] = '1';
+    frame_buf[4] = 1u;
+    frame_buf[5] = type;
+    mtv1_write_u16le(frame_buf + 6, 0u);
+    mtv1_write_u32le(frame_buf + 8, mtv1_stream_next_seq(stream));
+    mtv1_write_u32le(frame_buf + 12, payload_len);
+    mtv1_write_u32le(frame_buf + 16, 0u);
 
-    /* Magic */
-    hdr->magic[0] = 'M';
-    hdr->magic[1] = 'T';
-    hdr->magic[2] = 'V';
-    hdr->magic[3] = '1';
-
-    /* Header fields */
-    hdr->version = 1;
-    hdr->type = type;
-    hdr->flags = 0;
-    hdr->seq = mtv1_stream_next_seq(stream);
-    hdr->payload_len = payload_len;
-    hdr->crc32 = 0;  /* Will compute */
-
-    /* Copy payload */
-    if (payload_len > 0 && payload) {
+    if (payload_len > 0) {
         memcpy(frame_buf + 20, payload, payload_len);
     }
 
-    /* Calculate CRC32 over header(crc=0) + payload */
     uint32_t crc = 0xFFFFFFFFu;
-    crc = mt_crc32_ieee_update(frame_buf, 20, crc);  /* header with crc32=0 */
+    crc = mt_crc32_ieee_update(frame_buf, 20u, crc);
     if (payload_len > 0) {
-        crc = mt_crc32_ieee_update(frame_buf + 20, payload_len, crc);  /* payload */
+        crc = mt_crc32_ieee_update(frame_buf + 20u, payload_len, crc);
     }
-    crc ^= 0xFFFFFFFFu;  /* final XOR */
+    crc ^= 0xFFFFFFFFu;
+    mtv1_write_u32le(frame_buf + 16, crc);
 
-    /* Store CRC in header */
-    hdr->crc32 = crc;
-
-    /* Transmit frame (header + payload) */
-    size_t frame_total = 20 + payload_len;
+    size_t frame_total = 20u + (size_t)payload_len;
     int tx_result = stream->tx_fn(frame_buf, frame_total, stream->tx_ctx);
+    if (tx_result != (int)frame_total) {
+        return -1;
+    }
 
-    return (tx_result >= 0) ? 0 : -1;
+    return 0;
 }
 
-/**
- * mtv1_send_snapshot(stream, snapshot_buf, snapshot_len)
- * Send MTS1 snapshot as MTV1 frame.
- */
 int mtv1_send_snapshot(mtv1_stream_t* stream, const uint8_t* snapshot_buf, uint32_t snapshot_len)
 {
-    if (!snapshot_buf || snapshot_len < 40) {  /* Minimum: MTS1 header */
+    if (!snapshot_buf || snapshot_len < 36u) {
         return -1;
     }
 
     return mtv1_send_frame(stream, MTV1_TYPE_SNAPSHOT_MTS1, snapshot_buf, snapshot_len);
 }
 
-/**
- * mtv1_send_telemetry_line(stream, text)
- * Send text telemetry.
- */
 int mtv1_send_telemetry_line(mtv1_stream_t* stream, const char* text)
 {
     if (!text) {
         return -1;
     }
 
-    size_t len = 0;
-    for (const char* p = text; *p; p++) {
-        len++;
-    }
-
+    size_t len = strlen(text);
     if (len > MTV1_TX_MAX_PAYLOAD) {
         return -1;
     }
@@ -142,21 +131,13 @@ int mtv1_send_telemetry_line(mtv1_stream_t* stream, const char* text)
     return mtv1_send_frame(stream, MTV1_TYPE_TELEMETRY_TEXT, (const uint8_t*)text, (uint32_t)len);
 }
 
-/**
- * mtv1_send_mark(stream, label)
- * Send mark.
- */
 int mtv1_send_mark(mtv1_stream_t* stream, const char* label)
 {
     if (!label) {
         return -1;
     }
 
-    size_t len = 0;
-    for (const char* p = label; *p; p++) {
-        len++;
-    }
-
+    size_t len = strlen(label);
     if (len > MTV1_TX_MAX_PAYLOAD) {
         return -1;
     }
@@ -164,20 +145,12 @@ int mtv1_send_mark(mtv1_stream_t* stream, const char* label)
     return mtv1_send_frame(stream, MTV1_TYPE_MARK_TEXT, (const uint8_t*)label, (uint32_t)len);
 }
 
-/**
- * mtv1_send_end(stream)
- * Send END frame.
- */
 int mtv1_send_end(mtv1_stream_t* stream)
 {
-    return mtv1_send_frame(stream, MTV1_TYPE_END, NULL, 0);
+    return mtv1_send_frame(stream, MTV1_TYPE_END, NULL, 0u);
 }
 
-/**
- * mtv1_stream_free(stream)
- * Clean up (no-op since no malloc, but for API consistency).
- */
 void mtv1_stream_free(mtv1_stream_t* stream)
 {
-    (void)stream;  /* No cleanup needed */
+    free(stream);
 }

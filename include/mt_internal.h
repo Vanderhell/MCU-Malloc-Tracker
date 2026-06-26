@@ -27,6 +27,13 @@ typedef struct {
     uint32_t alloc_count;
 } mt_stats_core_t;
 
+typedef enum {
+    MT_FRAG_HEALTH_OK       = 0,
+    MT_FRAG_HEALTH_WARN     = 1,
+    MT_FRAG_HEALTH_CRITICAL = 2,
+    MT_FRAG_HEALTH_NA       = 3
+} mt_frag_health_t;
+
 /* ============================================================================
  * CORE STATE ACCESSORS (read-only)
  * ============================================================================ */
@@ -80,5 +87,10 @@ uint32_t mt__seq_now(void);
  * Called by mt_stats() in mt_heap_stats.c.
  */
 mt_stats_core_t mt__stats_core(void);
+
+uint32_t mt_get_fragmentation(uint32_t* out_total_free, uint32_t* out_largest_free);
+mt_frag_health_t mt_frag_health_from_packed(uint32_t packed);
+uint16_t mt_frag_permille_from_packed(uint32_t packed);
+int mt_frag_available_from_packed(uint32_t packed);
 
 #endif /* MT_INTERNAL_H */

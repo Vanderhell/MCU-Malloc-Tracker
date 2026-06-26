@@ -26,8 +26,8 @@ def crc32_ieee_full(data):
 
 def build_mts1_payload(record_count=0, current_used=0, peak_used=0, seq=1):
     """Build a minimal valid MTS1 snapshot payload."""
-    # 40-byte header
-    header = bytearray(40)
+    # 36-byte header
+    header = bytearray(36)
     header[0:4] = b'MTS1'
     struct.pack_into('<H', header, 4, 1)           # version = 1
     struct.pack_into('<H', header, 6, 0)           # flags = 0

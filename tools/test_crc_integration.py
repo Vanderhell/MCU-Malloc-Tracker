@@ -40,13 +40,13 @@ def verify_golden_vector():
         return False
 
     with open(golden_path, "rb") as f:
-        snapshot = f.read(64)
+        snapshot = f.read(60)
 
-    if len(snapshot) != 64:
-        print(f"ERROR: Expected 64 bytes, got {len(snapshot)}")
+    if len(snapshot) != 60:
+        print(f"ERROR: Expected 60 bytes, got {len(snapshot)}")
         return False
 
-    print(f"    Loaded: {len(snapshot)} bytes (40B header + 24B record)")
+    print(f"    Loaded: {len(snapshot)} bytes (36B header + 24B record)")
 
     # Extract embedded CRC from header
     embedded_crc = struct.unpack('<I', snapshot[32:36])[0]
@@ -56,7 +56,7 @@ def verify_golden_vector():
     print(f"\n[2] Computing CRC using Python mt_crc32_ieee()...")
     crc = 0xFFFFFFFF
     crc = crc32_ieee(snapshot[0:32], crc)    # Header: bytes 0-31
-    crc = crc32_ieee(snapshot[40:64], crc)   # Record: bytes 40-63
+    crc = crc32_ieee(snapshot[36:60], crc)   # Record: bytes 36-59
     crc ^= 0xFFFFFFFF                        # Final XOR
 
     print(f"    Computed CRC: 0x{crc:08x}")
@@ -98,12 +98,12 @@ def verify_golden_vector():
 
     # Show record structure
     print(f"\n[4] Record structure...")
-    ptr = struct.unpack('<Q', snapshot[40:48])[0]
-    size = struct.unpack('<I', snapshot[48:52])[0]
-    file_id = struct.unpack('<I', snapshot[52:56])[0]
-    line = struct.unpack('<H', snapshot[56:58])[0]
-    state = snapshot[58]
-    seq = struct.unpack('<I', snapshot[60:64])[0]
+    ptr = struct.unpack('<Q', snapshot[36:44])[0]
+    size = struct.unpack('<I', snapshot[44:48])[0]
+    file_id = struct.unpack('<I', snapshot[48:52])[0]
+    line = struct.unpack('<H', snapshot[52:54])[0]
+    state = snapshot[54]
+    seq = struct.unpack('<I', snapshot[56:60])[0]
 
     print(f"    ptr=0x{ptr:016x}")
     print(f"    size={size}")

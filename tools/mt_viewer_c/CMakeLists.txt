@@ -67,13 +67,16 @@ if(Python3_FOUND)
                 ${CMAKE_CURRENT_SOURCE_DIR}/vectors/
         COMMENT "Generating MTV1 test vectors"
     )
-    # Make tests depend on vector generation
-    add_dependencies(test_protocol gen_vectors)
-    add_dependencies(test_decode_mts1 gen_vectors)
-    add_dependencies(test_diff gen_vectors)
 else()
     message(WARNING "Python3 not found - test vectors must be generated manually")
     message(STATUS "Run: python3 tools/gen_vectors.py vectors/")
+endif()
+
+# When vectors are already present, allow tests to build without regeneration.
+if(TARGET gen_vectors)
+    add_dependencies(test_protocol gen_vectors)
+    add_dependencies(test_decode_mts1 gen_vectors)
+    add_dependencies(test_diff gen_vectors)
 endif()
 
 # ---- Message summary ----

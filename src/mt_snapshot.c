@@ -2,9 +2,8 @@
  * MCU Malloc Tracker - Binary Snapshot (Phase 5)
  *
  * Deterministic binary dump of heap state.
- * Format: Header (36B) + Records (24B each)
- * CRC32 for integrity
- * No malloc
+ * Wire format: 36-byte header + 24-byte records, all little-endian.
+ * CRC32/IEEE covers header bytes 0..31 followed by all record bytes.
  */
 
 #include <stddef.h>
@@ -19,45 +18,62 @@
 
 #if MT_ENABLE_SNAPSHOT
 
-/* ============================================================================
- * SNAPSHOT WRITE
- * ============================================================================ */
+enum {
+    MT_SNAPSHOT_HEADER_WIRE_SIZE = 36u,
+    MT_SNAPSHOT_RECORD_WIRE_SIZE = 24u
+};
 
-/**
- * mt_snapshot_write(out, out_cap)
- * Write deterministic binary snapshot of heap state.
- *
- * Returns: Number of bytes written, or 0 on failure
- */
+static void mt_write_u16le(uint8_t* dst, uint16_t value)
+{
+    dst[0] = (uint8_t)(value & 0xFFu);
+    dst[1] = (uint8_t)((value >> 8) & 0xFFu);
+}
+
+static void mt_write_u32le(uint8_t* dst, uint32_t value)
+{
+    dst[0] = (uint8_t)(value & 0xFFu);
+    dst[1] = (uint8_t)((value >> 8) & 0xFFu);
+    dst[2] = (uint8_t)((value >> 16) & 0xFFu);
+    dst[3] = (uint8_t)((value >> 24) & 0xFFu);
+}
+
+static void mt_write_u64le(uint8_t* dst, uintptr_t value)
+{
+    uint64_t v = (uint64_t)value;
+    dst[0] = (uint8_t)(v & 0xFFu);
+    dst[1] = (uint8_t)((v >> 8) & 0xFFu);
+    dst[2] = (uint8_t)((v >> 16) & 0xFFu);
+    dst[3] = (uint8_t)((v >> 24) & 0xFFu);
+    dst[4] = (uint8_t)((v >> 32) & 0xFFu);
+    dst[5] = (uint8_t)((v >> 40) & 0xFFu);
+    dst[6] = (uint8_t)((v >> 48) & 0xFFu);
+    dst[7] = (uint8_t)((v >> 56) & 0xFFu);
+}
+
 size_t mt_snapshot_write(uint8_t* out, size_t out_cap)
 {
-    if (!out || out_cap < sizeof(mt_snapshot_header_t)) {
+    if (!out || out_cap < MT_SNAPSHOT_HEADER_WIRE_SIZE) {
         return 0;
     }
 
-    /* Get current stats */
     mt_heap_stats_t stats = mt_stats();
     const mt_alloc_rec_t* alloc_table = mt__alloc_table();
     uint32_t table_cap = mt__alloc_table_cap();
 
-    /* Collect USED record indices */
-    uint16_t used_indices[MT_MAX_ALLOCS];
+    uint16_t used_indices[MT_MAX_ALLOCS] = {0};
     uint32_t used_count = 0;
 
     for (uint32_t i = 0; i < table_cap; i++) {
-        if (alloc_table[i].state == MT_STATE_USED) {
+        if (alloc_table[i].state == MT_STATE_USED && used_count < MT_MAX_ALLOCS) {
             used_indices[used_count++] = (uint16_t)i;
         }
     }
 
-    /* Sort indices by ptr (ascending) — O(n²) bubble sort */
     for (uint32_t i = 0; i < used_count; i++) {
         for (uint32_t j = i + 1; j < used_count; j++) {
-            uint64_t ptr_i = alloc_table[used_indices[i]].ptr;
-            uint64_t ptr_j = alloc_table[used_indices[j]].ptr;
-
+            uintptr_t ptr_i = alloc_table[used_indices[i]].ptr;
+            uintptr_t ptr_j = alloc_table[used_indices[j]].ptr;
             if (ptr_j < ptr_i) {
-                /* Swap */
                 uint16_t tmp = used_indices[i];
                 used_indices[i] = used_indices[j];
                 used_indices[j] = tmp;
@@ -65,114 +81,61 @@ size_t mt_snapshot_write(uint8_t* out, size_t out_cap)
         }
     }
 
-    /* Calculate required space */
-    size_t record_bytes = 24;  /* Fixed record size */
-    size_t header_bytes = sizeof(mt_snapshot_header_t);
+    size_t header_bytes = MT_SNAPSHOT_HEADER_WIRE_SIZE;
+    size_t record_bytes = MT_SNAPSHOT_RECORD_WIRE_SIZE;
     size_t needed = header_bytes + (used_count * record_bytes);
 
     uint32_t final_count = used_count;
-    uint32_t overflow = 0;
+    uint16_t flags = 0;
 
     if (needed > out_cap) {
-        /* Truncate records to fit */
-        final_count = (out_cap - header_bytes) / record_bytes;
-        overflow = 1;
-    }
-
-    /* Initialize header */
-    memset(out, 0, header_bytes);
-    mt_snapshot_header_t* hdr = (mt_snapshot_header_t*)out;
-
-    hdr->magic[0] = 'M';
-    hdr->magic[1] = 'T';
-    hdr->magic[2] = 'S';
-    hdr->magic[3] = '1';
-    hdr->version = 1;
-    hdr->flags = 0;
-
-    if (overflow) {
-        hdr->flags |= MT_SNAPSHOT_FLAG_OVERFLOW;
+        final_count = (uint32_t)((out_cap - header_bytes) / record_bytes);
+        flags |= MT_SNAPSHOT_FLAG_OVERFLOW;
     }
 
     if (stats.flags & MT_STAT_FLAG_FRAG_NA) {
-        hdr->flags |= 0x0002;  /* MT_SNAP_FLAG_FRAG_NA */
+        flags |= MT_SNAPSHOT_FLAG_FRAG_NA;
     }
-
     if (stats.flags & MT_STAT_FLAG_DROPS) {
-        hdr->flags |= 0x0004;  /* MT_SNAP_FLAG_DROPS */
+        flags |= MT_SNAPSHOT_FLAG_DROPS;
     }
+    flags |= MT_SNAPSHOT_FLAG_CRC_OK;
 
-    hdr->record_count = final_count;
-    hdr->current_used = stats.current_used;
-    hdr->peak_used = stats.peak_used;
-    hdr->total_allocs = stats.total_allocs;
-    hdr->total_frees = stats.total_frees;
-    hdr->seq = mt__seq_now();
-    hdr->crc32 = 0;  /* Will compute later */
-    hdr->flags |= 0x0008;  /* MT_SNAP_FLAG_CRC_OK — set BEFORE CRC calculation */
+    memset(out, 0, header_bytes);
+    out[0] = 'M';
+    out[1] = 'T';
+    out[2] = 'S';
+    out[3] = '1';
+    mt_write_u16le(out + 4, 1u);
+    mt_write_u16le(out + 6, flags);
+    mt_write_u32le(out + 8, final_count);
+    mt_write_u32le(out + 12, stats.current_used);
+    mt_write_u32le(out + 16, stats.peak_used);
+    mt_write_u32le(out + 20, stats.total_allocs);
+    mt_write_u32le(out + 24, stats.total_frees);
+    mt_write_u32le(out + 28, mt__seq_now());
+    mt_write_u32le(out + 32, 0u);
 
-    /* Write records */
     uint8_t* record_ptr = out + header_bytes;
-
     for (uint32_t i = 0; i < final_count; i++) {
         const mt_alloc_rec_t* rec = &alloc_table[used_indices[i]];
-
-        /* Little-endian write (portable) */
-        uint8_t* p = record_ptr + (i * 24);
-
-        /* ptr (uint64_t) */
-        p[0] = (rec->ptr >> 0) & 0xFF;
-        p[1] = (rec->ptr >> 8) & 0xFF;
-        p[2] = (rec->ptr >> 16) & 0xFF;
-        p[3] = (rec->ptr >> 24) & 0xFF;
-        p[4] = (rec->ptr >> 32) & 0xFF;
-        p[5] = (rec->ptr >> 40) & 0xFF;
-        p[6] = (rec->ptr >> 48) & 0xFF;
-        p[7] = (rec->ptr >> 56) & 0xFF;
-
-        /* size (uint32_t) */
-        p[8] = (rec->size >> 0) & 0xFF;
-        p[9] = (rec->size >> 8) & 0xFF;
-        p[10] = (rec->size >> 16) & 0xFF;
-        p[11] = (rec->size >> 24) & 0xFF;
-
-        /* file_id (uint32_t) */
-        p[12] = (rec->file_id >> 0) & 0xFF;
-        p[13] = (rec->file_id >> 8) & 0xFF;
-        p[14] = (rec->file_id >> 16) & 0xFF;
-        p[15] = (rec->file_id >> 24) & 0xFF;
-
-        /* line (uint16_t) */
-        p[16] = (rec->line >> 0) & 0xFF;
-        p[17] = (rec->line >> 8) & 0xFF;
-
-        /* state (uint8_t) — always 1 */
-        p[18] = 1;
-
-        /* _pad (uint8_t) */
-        p[19] = 0;
-
-        /* seq (uint32_t) */
-        p[20] = (rec->seq >> 0) & 0xFF;
-        p[21] = (rec->seq >> 8) & 0xFF;
-        p[22] = (rec->seq >> 16) & 0xFF;
-        p[23] = (rec->seq >> 24) & 0xFF;
+        uint8_t* p = record_ptr + (i * record_bytes);
+        mt_write_u64le(p + 0, rec->ptr);
+        mt_write_u32le(p + 8, rec->size);
+        mt_write_u32le(p + 12, rec->file_id);
+        mt_write_u16le(p + 16, rec->line);
+        p[18] = (uint8_t)MT_STATE_USED;
+        p[19] = 0u;
+        mt_write_u32le(p + 20, rec->seq);
     }
 
-    /* Calculate CRC32 (strict contract: final XOR applied once at very end) */
     uint32_t crc = 0xFFFFFFFFu;
-    crc = mt_crc32_ieee_update(out, header_bytes - 4, crc);  /* Process header excluding CRC field */
+    crc = mt_crc32_ieee_update(out, header_bytes - 4u, crc);
+    crc = mt_crc32_ieee_update(record_ptr, (size_t)final_count * record_bytes, crc);
+    crc ^= 0xFFFFFFFFu;
+    mt_write_u32le(out + 32, crc);
 
-    size_t records_size = final_count * 24;
-    crc = mt_crc32_ieee_update(record_ptr, records_size, crc);  /* Process records, continuing from header CRC */
-
-    crc ^= 0xFFFFFFFFu;  /* Final XOR applied once after all data */
-
-    /* Write CRC back to header */
-    hdr->crc32 = crc;
-
-    /* Return total bytes written */
-    return header_bytes + (final_count * 24);
+    return header_bytes + ((size_t)final_count * record_bytes);
 }
 
 #endif /* MT_ENABLE_SNAPSHOT */

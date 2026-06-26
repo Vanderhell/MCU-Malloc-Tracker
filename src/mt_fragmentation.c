@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include "../include/mt_config.h"
 #include "../include/mt_types.h"
+#include "../include/mt_internal.h"
 
 /* ============================================================================
  * FRAGMENTATION THRESHOLDS (configurable)
@@ -28,20 +29,10 @@
 /* Above 500 permille = CRITICAL */
 
 /* ============================================================================
- * FRAGMENTATION HEALTH ENUM
- * ============================================================================ */
-
-typedef enum {
-    MT_FRAG_HEALTH_OK       = 0,
-    MT_FRAG_HEALTH_WARN     = 1,
-    MT_FRAG_HEALTH_CRITICAL = 2,
-    MT_FRAG_HEALTH_NA       = 3
-} mt_frag_health_t;
-
-/* ============================================================================
  * FRAGMENTATION CALCULATION
  * ============================================================================ */
 
+#if MT_PLATFORM_HEAP_WALK == 1
 /**
  * mt_calc_fragmentation()
  * Calculate fragmentation ratio in permille (0..1000) using fixed-point.
@@ -76,11 +67,6 @@ static uint16_t mt_calc_fragmentation(uint32_t total_free, uint32_t largest_free
     uint32_t ratio = (largest_free * 1000u) / total_free;
     uint16_t frag = 1000u - ratio;
 
-    /* Clamp to [0, 1000] (shouldn't be needed, but safe) */
-    if (frag > 1000) {
-        frag = 1000;
-    }
-
     return frag;
 }
 
@@ -104,6 +90,7 @@ static mt_frag_health_t mt_frag_health_classify(uint16_t frag_permille, int frag
 
     return MT_FRAG_HEALTH_CRITICAL;
 }
+#endif
 
 /* ============================================================================
  * PUBLIC FRAGMENTATION FUNCTION
@@ -154,7 +141,7 @@ uint32_t mt_get_fragmentation(uint32_t* out_total_free, uint32_t* out_largest_fr
     uint32_t result = 0;
     result |= (frag_permille & 0xFFFF);           /* Bits 0..15: permille */
     result |= ((health & 0x03) << 16);            /* Bits 16..17: health */
-    result |= ((frag_available & 0x01) << 19);    /* Bit 19: available */
+    result |= ((uint32_t)(frag_available & 0x01) << 19);    /* Bit 19: available */
 
     return result;
 }

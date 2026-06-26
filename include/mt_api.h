@@ -9,8 +9,8 @@
  * MCU Malloc Tracker - Public API
  *
  * Clean, minimal API for malloc/free tracking on MCU.
- * All functions are deterministic and non-blocking.
- * No dynamic allocation within tracker (guaranteed by design).
+ * The default build is single-context; do not assume thread safety.
+ * No dynamic allocation within tracker core paths.
  */
 
 /* ============================================================================
@@ -20,8 +20,8 @@
 /**
  * mt_init()
  * Initialize the malloc tracker.
- * Must be called once before any malloc/free/realloc calls.
- * Safe to call multiple times (idempotent).
+ * Must be called once before tracked malloc/free/realloc calls.
+ * Repeated calls are ignored after initialization.
  */
 void mt_init(void);
 
@@ -47,8 +47,7 @@ void mt_init(void);
  * Notes:
  *   - Calls MT_REAL_MALLOC internally
  *   - Tracks allocation in fixed-size table
- *   - If table is full (MT_MAX_ALLOCS reached), new allocs are dropped
- *     with a warning (see KNOWN_LIMITS.md)
+ *   - If table is full (MT_MAX_ALLOCS reached), new allocs are dropped.
  */
 void* mt_malloc(size_t size, const char* file, int line);
 
@@ -65,6 +64,7 @@ void* mt_malloc(size_t size, const char* file, int line);
  *   - Calls MT_REAL_FREE internally
  *   - Marks allocation record as TOMBSTONE (not removed, to preserve hash table structure)
  *   - Safe to call with NULL pointer
+ *   - Unknown or already-freed pointers are not forwarded twice
  */
 void mt_free(void* ptr, const char* file, int line);
 
@@ -83,8 +83,8 @@ void mt_free(void* ptr, const char* file, int line);
  *
  * Notes:
  *   - Calls MT_REAL_REALLOC internally
- *   - Handles 3 cases: ptr==NULL (malloc), size==0 (free), else (resize)
- *   - Updates tracking records accordingly
+ *   - Handles ptr==NULL (malloc), size==0 (free), else (resize)
+ *   - Updates tracking records when the old allocation is tracked
  */
 void* mt_realloc(void* ptr, size_t size, const char* file, int line);
 
@@ -103,7 +103,7 @@ void* mt_realloc(void* ptr, size_t size, const char* file, int line);
  *   - O(n) operation where n = MT_MAX_ALLOCS (but typically fast)
  *   - Fragmentation metrics (largest_free, total_free) require MT_PLATFORM_HEAP_WALK
  *     If not available, they are set to 0 (see KNOWN_LIMITS.md)
- *   - Safe to call from any context
+ *   - Host build is not synchronized by default
  */
 mt_heap_stats_t mt_stats(void);
 
@@ -126,7 +126,7 @@ mt_heap_stats_t mt_stats(void);
  *   If snapshot is larger than out_cap, truncated (see MT_SNAPSHOT_FLAG_OVERFLOW in header)
  *
  * Binary format:
- *   - Header: mt_snapshot_header_t (40 bytes)
+ *   - Header: 36-byte wire header
  *   - Records: array of mt_alloc_rec_t (28 bytes each)
  *   - Records are deterministic: sorted by ptr (ascending)
  *   - Only USED records are included (EMPTY/TOMBSTONE skipped)

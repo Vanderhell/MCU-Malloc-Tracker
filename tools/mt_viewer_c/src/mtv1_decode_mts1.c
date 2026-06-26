@@ -22,8 +22,8 @@ uint64_t mts1_read_u64le(const uint8_t* p) {
 
 int mts1_parse(const uint8_t* payload, uint32_t payload_len,
                mts1_snapshot_t* out) {
-    /* Minimum: 40-byte header */
-    if (payload_len < 40)
+    /* Minimum: 36-byte header */
+    if (payload_len < 36)
         return -1;
 
     mts1_header_t* hdr = &out->hdr;
@@ -49,7 +49,10 @@ int mts1_parse(const uint8_t* payload, uint32_t payload_len,
         return -1;
 
     /* Validate payload size: must be at least header, may have records */
-    uint32_t expected_size = 40 + hdr->record_count * 24;
+    if (hdr->record_count > (UINT32_MAX - 36u) / 24u)
+        return -1;
+
+    uint32_t expected_size = 36u + hdr->record_count * 24u;
     if (payload_len < expected_size)
         return -1; /* payload too short */
 
@@ -59,7 +62,7 @@ int mts1_parse(const uint8_t* payload, uint32_t payload_len,
         return -1;
 
     /* Parse records */
-    const uint8_t* rec_ptr = payload + 40;
+    const uint8_t* rec_ptr = payload + 36;
     for (uint32_t i = 0; i < hdr->record_count; i++) {
         mts1_record_t* rec = &out->records[i];
         rec->ptr = mts1_read_u64le(rec_ptr + 0);
@@ -79,12 +82,12 @@ int mts1_parse(const uint8_t* payload, uint32_t payload_len,
 int mts1_verify_crc(const uint8_t* payload, uint32_t payload_len,
                     const mts1_snapshot_t* snap) {
     /* Recompute CRC: header[0:32] + records, final XOR once */
-    if (payload_len < 40)
+    if (payload_len < 36)
         return 0;
 
     uint32_t crc = 0xFFFFFFFFu;
     crc = mtv1_crc32_update(payload, 32, crc);           /* header[0:32] */
-    crc = mtv1_crc32_update(payload + 40, payload_len - 40, crc);  /* records */
+    crc = mtv1_crc32_update(payload + 36, payload_len - 36, crc);  /* records */
     crc ^= 0xFFFFFFFFu;
 
     return (crc == snap->hdr.crc32) ? 1 : 0;

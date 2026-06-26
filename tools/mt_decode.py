@@ -222,6 +222,19 @@ def main():
         print(f"Error parsing header: {e}", file=sys.stderr)
         sys.exit(1)
 
+    if header['version'] != VERSION:
+        print(f"Error: unsupported version {header['version']} (expected {VERSION})", file=sys.stderr)
+        sys.exit(1)
+
+    if header['record_count'] > (2**32 - 1) // RECORD_SIZE:
+        print("Error: record count overflow", file=sys.stderr)
+        sys.exit(1)
+
+    expected_len = HEADER_SIZE + header['record_count'] * RECORD_SIZE
+    if len(data) < expected_len:
+        print("Error: truncated snapshot payload", file=sys.stderr)
+        sys.exit(1)
+
     # Parse records
     records = []
     for i in range(header['record_count']):
@@ -235,24 +248,21 @@ def main():
     if args.filemap:
         filemap = load_filemap(args.filemap)
 
-    # Verify CRC if flag is set
-    if header['flags'] & FLAG_CRC_OK:
-        # Recompute CRC (strict contract: final XOR applied once at very end)
-        # The CRC is calculated over header (excluding CRC field) + records
-        header_data = data[0:HEADER_SIZE - 4]  # Process all header except CRC field (bytes 0-31)
-        records_data = data[HEADER_SIZE:HEADER_SIZE + header['record_count'] * RECORD_SIZE]
+    # Verify CRC by default.
+    header_data = data[0:HEADER_SIZE - 4]
+    records_data = data[HEADER_SIZE:HEADER_SIZE + header['record_count'] * RECORD_SIZE]
 
-        computed_crc = 0xFFFFFFFF
-        computed_crc = crc32_ieee(bytes(header_data), computed_crc)  # Process header
-        computed_crc = crc32_ieee(records_data, computed_crc)  # Process records
-        computed_crc ^= 0xFFFFFFFF  # Final XOR applied once after all data
+    computed_crc = 0xFFFFFFFF
+    computed_crc = crc32_ieee(bytes(header_data), computed_crc)
+    computed_crc = crc32_ieee(records_data, computed_crc)
+    computed_crc ^= 0xFFFFFFFF
 
-        if computed_crc == header['crc32']:
-            crc_status = "[OK] Valid"
-        else:
-            crc_status = f"[FAIL] Mismatch (computed: 0x{computed_crc:08x})"
+    if computed_crc == header['crc32']:
+        crc_status = "[OK] Valid"
     else:
-        crc_status = "[N/A] Not present"
+        crc_status = f"[FAIL] Mismatch (computed: 0x{computed_crc:08x})"
+        print(f"Error: CRC mismatch (expected 0x{header['crc32']:08x}, computed 0x{computed_crc:08x})", file=sys.stderr)
+        sys.exit(1)
 
     print(f"CRC32 Status: {crc_status}\n")
 

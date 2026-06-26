@@ -35,6 +35,7 @@ static uint32_t g_total_frees       = 0;
 static uint32_t g_total_reallocs    = 0;
 static uint32_t g_current_used      = 0;
 static uint32_t g_peak_used         = 0;
+static uint8_t  g_initialized       = 0;
 
 /* ============================================================================
  * PHASE 2B — POINTER HASH (shift + mix, not FNV1a)
@@ -47,19 +48,49 @@ static uint32_t g_peak_used         = 0;
  */
 static inline uint32_t mt_hash_ptr(uintptr_t p)
 {
-    /* Remove alignment bits (typically aligned to 4+ bytes) */
-    p >>= 2;
+#if UINTPTR_MAX > 0xffffffffu
+    uint64_t x = (uint64_t)p >> 3;
+    uint32_t h = (uint32_t)(x ^ (x >> 32));
+#else
+    uint32_t h = (uint32_t)p >> 2;
+#endif
 
-    /* Mix for 64-bit pointers: fold high bits into low bits */
-    uint32_t x = (uint32_t)(p ^ (p >> 32));
+    h ^= h >> 16;
+    h *= 0x7feb352dU;
+    h ^= h >> 15;
+    h *= 0x846ca68bU;
+    h ^= h >> 16;
+    return h;
+}
 
-    /* Cheap 32-bit mixing (2x multiply) */
-    x *= 0x7feb352d;
-    x ^= x >> 15;
-    x *= 0x846ca68b;
-    x ^= x >> 16;
+static inline uint32_t mt_clamp_size_u32(size_t size)
+{
+    if (size > UINT32_MAX) {
+        return UINT32_MAX;
+    }
+    return (uint32_t)size;
+}
 
-    return x;
+static inline void mt_add_current_used(uint32_t delta)
+{
+    if (UINT32_MAX - g_current_used < delta) {
+        g_current_used = UINT32_MAX;
+    } else {
+        g_current_used += delta;
+    }
+
+    if (g_current_used > g_peak_used) {
+        g_peak_used = g_current_used;
+    }
+}
+
+static inline void mt_sub_current_used(uint32_t delta)
+{
+    if (g_current_used < delta) {
+        g_current_used = 0;
+    } else {
+        g_current_used -= delta;
+    }
 }
 
 /* ============================================================================
@@ -73,21 +104,21 @@ static inline uint32_t mt_hash_ptr(uintptr_t p)
  * Linear probing stops on EMPTY (not found) or when USED with matching ptr.
  * TOMBSTONE slots are skipped (deleted records).
  */
-static int mt_find_slot(void* ptr, uint32_t* out_idx)
+static int mt_find_slot(const void* ptr, uint32_t* out_idx)
 {
     uint32_t h = mt_hash_ptr((uintptr_t)ptr);
     uint32_t mask = MT_MAX_ALLOCS - 1;
     uint32_t idx = h & mask;
 
     for (uint32_t i = 0; i < MT_MAX_ALLOCS; i++) {
-        mt_alloc_rec_t* rec = &g_allocs[idx];
+        const mt_alloc_rec_t* rec = &g_allocs[idx];
 
         if (rec->state == MT_STATE_EMPTY) {
             /* Not found */
             return 0;
         }
 
-        if (rec->state == MT_STATE_USED && rec->ptr == (uint64_t)(uintptr_t)ptr) {
+        if (rec->state == MT_STATE_USED && rec->ptr == (uintptr_t)ptr) {
             /* Found */
             if (out_idx) *out_idx = idx;
             return 1;
@@ -108,24 +139,26 @@ static int mt_find_slot(void* ptr, uint32_t* out_idx)
  * Returns 1 if slot found, 0 if table is full.
  * Linear probing: stop at EMPTY (best case).
  */
-static int mt_find_insert_slot(void* ptr, uint32_t* out_idx)
+static int mt_find_insert_slot(const void* ptr, uint32_t* out_idx)
 {
     uint32_t h = mt_hash_ptr((uintptr_t)ptr);
     uint32_t mask = MT_MAX_ALLOCS - 1;
     uint32_t idx = h & mask;
-    uint32_t tombstone_idx = (uint32_t)-1;
+    uint32_t tombstone_idx = MT_MAX_ALLOCS;
 
     for (uint32_t i = 0; i < MT_MAX_ALLOCS; i++) {
-        mt_alloc_rec_t* rec = &g_allocs[idx];
+        const mt_alloc_rec_t* rec = &g_allocs[idx];
 
         if (rec->state == MT_STATE_EMPTY) {
-            /* Prefer EMPTY over TOMBSTONE */
-            if (out_idx) *out_idx = idx;
+            if (tombstone_idx != MT_MAX_ALLOCS) {
+                if (out_idx) *out_idx = tombstone_idx;
+            } else if (out_idx) {
+                *out_idx = idx;
+            }
             return 1;
         }
 
-        if (rec->state == MT_STATE_TOMBSTONE && tombstone_idx == (uint32_t)-1) {
-            /* Remember first TOMBSTONE, but keep looking for EMPTY */
+        if (rec->state == MT_STATE_TOMBSTONE && tombstone_idx == MT_MAX_ALLOCS) {
             tombstone_idx = idx;
         }
 
@@ -133,7 +166,7 @@ static int mt_find_insert_slot(void* ptr, uint32_t* out_idx)
     }
 
     /* No EMPTY found. Use TOMBSTONE if available */
-    if (tombstone_idx != (uint32_t)-1) {
+    if (tombstone_idx != MT_MAX_ALLOCS) {
         if (out_idx) *out_idx = tombstone_idx;
         return 1;
     }
@@ -164,9 +197,14 @@ static void mt_slot_free(uint32_t idx)
 
 void mt_init(void)
 {
+    if (g_initialized) {
+        return;
+    }
+
     /* Initialize all slots to EMPTY */
     for (uint32_t i = 0; i < MT_MAX_ALLOCS; i++) {
         g_allocs[i].state = MT_STATE_EMPTY;
+        g_allocs[i].ptr = 0;
     }
 
     /* Reset counters */
@@ -185,6 +223,7 @@ void mt_init(void)
 
     /* Initialize hotspots (Phase 4) */
     mt_hotspot_init();
+    g_initialized = 1;
 }
 
 /* ============================================================================
@@ -193,6 +232,10 @@ void mt_init(void)
 
 void* mt_malloc(size_t size, const char* file, int line)
 {
+    if (!g_initialized) {
+        mt_init();
+    }
+
     /* Recursion guard: if already inside tracker, call real malloc */
     if (g_inside != 0) {
         return MT_REAL_MALLOC(size);
@@ -210,20 +253,34 @@ void* mt_malloc(size_t size, const char* file, int line)
 
     /* Compute file_id for tracking (used in both drop and insert cases) */
     uint32_t file_id = 0;
-    uint16_t line_num = (uint16_t)line;
+    uint16_t line_num;
+
+    if (line < 0) {
+        line_num = 0;
+    } else if (line > 65535) {
+        line_num = 65535;
+    } else {
+        line_num = (uint16_t)line;
+    }
 
 #if MT_CAPTURE_CALLSITE
 #if MT_FILE_ID_MODE == 1
     /* Hash filename (FNV1a-32) */
     uint32_t hash = 2166136261u;    /* FNV1a offset basis */
-    for (const char* c = file; *c; c++) {
-        hash ^= (uint8_t)*c;
-        hash *= 16777619u;          /* FNV1a prime */
+    if (file != NULL) {
+        for (const char* c = file; *c; c++) {
+            hash ^= (uint8_t)*c;
+            hash *= 16777619u;      /* FNV1a prime */
+        }
     }
     file_id = hash;
 #else
     /* Store pointer to filename string */
+#if UINTPTR_MAX > 0xffffffffu
+    file_id = (uint32_t)((uintptr_t)file ^ ((uintptr_t)file >> 32));
+#else
     file_id = (uint32_t)(uintptr_t)file;
+#endif
 #endif
 #endif
 
@@ -245,8 +302,8 @@ void* mt_malloc(size_t size, const char* file, int line)
 
     /* Record allocation */
     mt_alloc_rec_t* rec = &g_allocs[idx];
-    rec->ptr = (uint64_t)(uintptr_t)ptr;
-    rec->size = (uint32_t)size;      /* Clamp to uint32_t */
+    rec->ptr = (uintptr_t)ptr;
+    rec->size = mt_clamp_size_u32(size);
     rec->file_id = file_id;
     rec->line = line_num;
     rec->seq = current_seq;
@@ -256,10 +313,7 @@ void* mt_malloc(size_t size, const char* file, int line)
     g_used_count++;
     g_total_allocs++;
     g_seq++;  /* Increment sequence after use */
-    g_current_used += (uint32_t)size;
-    if (g_current_used > g_peak_used) {
-        g_peak_used = g_current_used;
-    }
+    mt_add_current_used(rec->size);
 
     /* Record hotspot (Phase 4) */
     mt_hotspot_record(file_id, line_num, (uint32_t)size, current_seq);
@@ -278,6 +332,10 @@ void mt_free(void* ptr, const char* file, int line)
 {
     (void)file;    /* Unused in free, but keep signature consistent */
     (void)line;
+
+    if (!g_initialized) {
+        mt_init();
+    }
 
     if (ptr == NULL) {
         /* Standard C: free(NULL) is no-op */
@@ -298,12 +356,25 @@ void mt_free(void* ptr, const char* file, int line)
     uint32_t idx;
     if (mt_find_slot(ptr, &idx)) {
         mt_alloc_rec_t* rec = &g_allocs[idx];
-        g_current_used -= rec->size;    /* Update current usage */
+        mt_sub_current_used(rec->size);  /* Update current usage */
         g_total_frees++;
 
         mt_slot_free(idx);              /* Mark as TOMBSTONE */
+        MT_UNLOCK();
+        g_inside = 0;
+        MT_REAL_FREE(ptr);
+        return;
     }
-    /* If not found: silently skip (free unknown ptr doesn't crash) */
+
+    /* If the pointer was already freed, do not forward it to the allocator. */
+    for (uint32_t i = 0; i < MT_MAX_ALLOCS; i++) {
+        if (g_allocs[i].state == MT_STATE_TOMBSTONE &&
+            g_allocs[i].ptr == (uintptr_t)ptr) {
+            MT_UNLOCK();
+            g_inside = 0;
+            return;
+        }
+    }
 
     MT_UNLOCK();
     g_inside = 0;
@@ -318,6 +389,10 @@ void mt_free(void* ptr, const char* file, int line)
 
 void* mt_realloc(void* ptr, size_t size, const char* file, int line)
 {
+    if (!g_initialized) {
+        mt_init();
+    }
+
     /* Recursion guard */
     if (g_inside != 0) {
         return MT_REAL_REALLOC(ptr, size);
@@ -334,6 +409,18 @@ void* mt_realloc(void* ptr, size_t size, const char* file, int line)
         return NULL;
     }
 
+    uint32_t idx;
+    int tracked = mt_find_slot(ptr, &idx);
+    mt_alloc_rec_t* rec = tracked ? &g_allocs[idx] : NULL;
+    uint32_t old_size = 0;
+    uint32_t old_file_id = 0;
+    uint16_t old_line = 0;
+    if (tracked) {
+        old_size = rec->size;
+        old_file_id = rec->file_id;
+        old_line = rec->line;
+    }
+
     /* Case 3: normal realloc */
     void* new_ptr = MT_REAL_REALLOC(ptr, size);
     if (new_ptr == NULL) {
@@ -345,35 +432,80 @@ void* mt_realloc(void* ptr, size_t size, const char* file, int line)
     g_inside = 1;
     MT_LOCK();
 
-    uint32_t idx;
-    if (mt_find_slot(ptr, &idx)) {
-        mt_alloc_rec_t* rec = &g_allocs[idx];
-        uint32_t old_size = rec->size;
+    if (tracked) {
 
-        /* Update size and statistics */
-        rec->size = (uint32_t)size;
-        rec->ptr = (uint64_t)(uintptr_t)new_ptr;
-        rec->seq = g_seq++;             /* New seq for realloc */
-
-        /* Update current usage (can go up or down) */
-        if (size > old_size) {
-            g_current_used += (uint32_t)(size - old_size);
-        } else {
-            g_current_used -= (uint32_t)(old_size - size);
+        if (new_ptr == ptr) {
+            rec->size = (uint32_t)size;
+            if (size > old_size) {
+                mt_add_current_used(mt_clamp_size_u32(size - old_size));
+            } else {
+                mt_sub_current_used(mt_clamp_size_u32(old_size - size));
+            }
+            rec->seq = g_seq++;
+            g_total_reallocs++;
+            MT_UNLOCK();
+            g_inside = 0;
+            return new_ptr;
         }
 
-        if (g_current_used > g_peak_used) {
-            g_peak_used = g_current_used;
-        }
+        mt_slot_free(idx);
 
-        g_total_reallocs++;
+        uint32_t new_idx;
+        if (mt_find_insert_slot(new_ptr, &new_idx)) {
+            mt_alloc_rec_t* new_rec = &g_allocs[new_idx];
+            int reuse_tombstone = (new_rec->state == MT_STATE_TOMBSTONE);
+
+            new_rec->ptr = (uintptr_t)new_ptr;
+            new_rec->size = mt_clamp_size_u32(size);
+            new_rec->file_id = old_file_id;
+            new_rec->line = old_line;
+            new_rec->seq = g_seq++;
+            new_rec->state = MT_STATE_USED;
+
+            if (reuse_tombstone && g_tombstone_count > 0) {
+                g_tombstone_count--;
+            }
+            g_used_count++;
+
+            if (size > old_size) {
+                mt_add_current_used(mt_clamp_size_u32(size - old_size));
+            } else {
+                mt_sub_current_used(mt_clamp_size_u32(old_size - size));
+            }
+
+            g_total_reallocs++;
+            MT_UNLOCK();
+            g_inside = 0;
+            return new_ptr;
+        }
+    } else {
+        uint32_t new_idx;
+        if (mt_find_insert_slot(new_ptr, &new_idx)) {
+            mt_alloc_rec_t* new_rec = &g_allocs[new_idx];
+            int reuse_tombstone = (new_rec->state == MT_STATE_TOMBSTONE);
+
+            new_rec->ptr = (uintptr_t)new_ptr;
+            new_rec->size = mt_clamp_size_u32(size);
+            new_rec->file_id = 0;
+            new_rec->line = 0;
+            new_rec->seq = g_seq++;
+            new_rec->state = MT_STATE_USED;
+
+            if (reuse_tombstone && g_tombstone_count > 0) {
+                g_tombstone_count--;
+            }
+            g_used_count++;
+            mt_add_current_used(new_rec->size);
+            g_total_reallocs++;
+            MT_UNLOCK();
+            g_inside = 0;
+            return new_ptr;
+        }
     }
-    /* If old ptr not found: we have a new pointer in the system
-     * (shouldn't happen in well-behaved code, but we don't crash) */
 
+    /* Should be unreachable because tombstones are reused on successful realloc. */
     MT_UNLOCK();
     g_inside = 0;
-
     return new_ptr;
 }
 

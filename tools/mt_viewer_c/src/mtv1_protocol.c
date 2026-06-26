@@ -77,15 +77,6 @@ mtv1_parse_result_t mtv1_frame_read(
         return MTV1_PARSE_ERROR;
     }
 
-    /* Special case: END frame has no payload */
-    if (out_frame->hdr.type == MTV1_TYPE_END) {
-        out_frame->payload = NULL;
-        out_frame->crc_ok = 1; /* END frames don't require CRC check */
-        if (out_resync_bytes)
-            *out_resync_bytes = resync_bytes;
-        return MTV1_PARSE_OK;
-    }
-
     /* Phase 4: Read payload */
     if (out_frame->hdr.payload_len > 0) {
         out_frame->payload = (uint8_t*)malloc(out_frame->hdr.payload_len);

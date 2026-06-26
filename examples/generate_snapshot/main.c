@@ -20,6 +20,7 @@ int main(void)
     void* b1 = malloc(64);
     void* b2 = malloc(128);
     void* b3 = malloc(256);
+    (void)b2;
 
     free(b1);
     realloc(b3, 512);

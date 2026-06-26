@@ -27,7 +27,7 @@ typedef enum {
  * ALLOCATION RECORD
  * ============================================================================ */
 typedef struct {
-    uint64_t ptr;           /* Allocated pointer (always 64-bit for determinism) */
+    uintptr_t ptr;          /* In-memory pointer identity */
     uint32_t size;          /* Allocation size in bytes */
     uint32_t file_id;       /* File hash (FNV1a-32) or file ptr depending on MT_FILE_ID_MODE */
     uint16_t line;          /* Source line number (clamped to 65535) */
@@ -112,6 +112,9 @@ typedef struct {
  * SNAPSHOT OVERFLOW FLAG
  * ============================================================================ */
 #define MT_SNAPSHOT_FLAG_OVERFLOW 0x0001
+#define MT_SNAPSHOT_FLAG_FRAG_NA  0x0002
+#define MT_SNAPSHOT_FLAG_DROPS     0x0004
+#define MT_SNAPSHOT_FLAG_CRC_OK    0x0008
 
 /* ============================================================================
  * INTERNAL TRACKER STATE (not exposed to API)

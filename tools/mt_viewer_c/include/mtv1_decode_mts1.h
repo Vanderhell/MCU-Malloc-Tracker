@@ -10,7 +10,7 @@
 #define MTS1_FLAG_DROPS     0x0004
 #define MTS1_FLAG_CRC_OK    0x0008
 
-/* MTS1 Header: 40 bytes, little-endian */
+/* MTS1 Header: 36 bytes, little-endian */
 typedef struct {
     char     magic[4];         /* "MTS1" */
     uint16_t version;          /* 1 */
@@ -22,12 +22,11 @@ typedef struct {
     uint32_t total_frees;      /* cumulative free calls */
     uint32_t seq;              /* global seq counter at snapshot time */
     uint32_t crc32;            /* CRC32 over header[0:32] + all records */
-    /* padding (4 bytes to 40 total, not read) */
 } mts1_header_t;
 
 /* MTS1 Record: 24 bytes, little-endian (one per active allocation) */
 typedef struct {
-    uint64_t ptr;              /* allocation pointer */
+    uintptr_t ptr;             /* allocation pointer */
     uint32_t size;             /* allocation size in bytes */
     uint32_t file_id;          /* FNV1a-32 hash of __FILE__ */
     uint16_t line;             /* source line number */

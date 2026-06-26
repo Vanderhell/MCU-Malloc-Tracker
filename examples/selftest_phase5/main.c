@@ -34,7 +34,7 @@ int main(void)
     /* Allocate 3 blocks */
     printf("[2] Allocating 3 blocks...\n");
     void* block1 = malloc(64);
-    void* block2 = malloc(128);
+    const void* block2 = malloc(128);
     void* block3 = malloc(256);
     printf("    block1=%p (64B)\n", block1);
     printf("    block2=%p (128B)\n", block2);
@@ -46,7 +46,7 @@ int main(void)
 
     /* Realloc block3 */
     printf("[4] Reallocating block3 (256->512)...\n");
-    void* block3_resized = realloc(block3, 512);
+    const void* block3_resized = realloc(block3, 512);
     printf("    block3_resized=%p\n", block3_resized);
 
     /* block2 is leak */
@@ -68,21 +68,30 @@ int main(void)
     /* Verify snapshot */
     printf("\n[7] Verifying snapshot:\n");
 
-    if (snap_size < 40) {
-        printf("❌ FAIL: Snapshot too small (< 40 bytes)\n");
+    if (snap_size < 36) {
+        printf("❌ FAIL: Snapshot too small (< 36 bytes)\n");
         return 1;
     }
 
     /* Parse header */
-    uint8_t* p = snapshot_buf;
+    const uint8_t* p = snapshot_buf;
 
     char magic[4];
     memcpy(magic, p + 0, 4);
-    uint16_t version = p[4] | (p[5] << 8);
-    uint16_t flags = p[6] | (p[7] << 8);
-    uint32_t record_count = p[8] | (p[9] << 8) | (p[10] << 16) | (p[11] << 24);
-    uint32_t current_used = p[12] | (p[13] << 8) | (p[14] << 16) | (p[15] << 24);
-    uint32_t crc32_in_header = p[32] | (p[33] << 8) | (p[34] << 16) | (p[35] << 24);
+    uint16_t version = (uint16_t)(p[4] | ((uint16_t)p[5] << 8));
+    uint16_t flags = (uint16_t)(p[6] | ((uint16_t)p[7] << 8));
+    uint32_t record_count = (uint32_t)p[8] |
+                            ((uint32_t)p[9] << 8) |
+                            ((uint32_t)p[10] << 16) |
+                            ((uint32_t)p[11] << 24);
+    uint32_t current_used = (uint32_t)p[12] |
+                            ((uint32_t)p[13] << 8) |
+                            ((uint32_t)p[14] << 16) |
+                            ((uint32_t)p[15] << 24);
+    uint32_t crc32_in_header = (uint32_t)p[32] |
+                               ((uint32_t)p[33] << 8) |
+                               ((uint32_t)p[34] << 16) |
+                               ((uint32_t)p[35] << 24);
 
     printf("  magic: %.4s (expected MTS1)\n", magic);
     printf("  version: %u (expected 1)\n", version);
@@ -132,8 +141,8 @@ int main(void)
     /* Verify record ptr ordering */
     printf("\n[8] Verifying record ptr ordering:\n");
     if (record_count >= 2) {
-        uint8_t* rec0 = snapshot_buf + 40 + 0;  /* First record */
-        uint8_t* rec1 = snapshot_buf + 40 + 24; /* Second record */
+        const uint8_t* rec0 = snapshot_buf + 36 + 0;  /* First record */
+        const uint8_t* rec1 = snapshot_buf + 36 + 24; /* Second record */
 
         uint64_t ptr0 = (uint64_t)rec0[0] |
                         ((uint64_t)rec0[1] << 8) |

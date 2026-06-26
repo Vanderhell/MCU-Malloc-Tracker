@@ -61,10 +61,7 @@ static void mt_write_hex32(void (*write_fn)(const char* s),
     write_fn(buf);
 }
 
-/**
- * mt_write_hex64(write_fn, key, value)
- * Format and output a key=0xVALUE pair (uint64_t hex).
- */
+#if 0
 static void mt_write_hex64(void (*write_fn)(const char* s),
                            const char* key, uint64_t value)
 {
@@ -76,6 +73,7 @@ static void mt_write_hex64(void (*write_fn)(const char* s),
     snprintf(buf, sizeof(buf), "%s=0x%016llx\n", key, (unsigned long long)value);
     write_fn(buf);
 }
+#endif
 
 /* ============================================================================
  * PHASE 6B — mt_dump_uart() (MAIN ENTRYPOINT)
