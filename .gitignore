@@ -41,3 +41,13 @@ artifacts/_dev/
 # OS files
 Thumbs.db
 .DS_Store
+/prompts
+/build_clang_c99_o0
+/build_clang_gnu_c11_o0
+/build_clang_gnu_c11_o0b
+/build_clang_gnu_c99_o0
+/build_clangcl_c11_o0
+/build_gcc_c11_o2
+/build_gcc_c99_o0
+/build_verify2
+/build_msvc_verify
