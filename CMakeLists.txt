@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(MCU_Malloc_Tracker VERSION 0.1.0 LANGUAGES C)
+project(MCU_Malloc_Tracker VERSION 2.0.0 LANGUAGES C)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)

@@ -1,4 +1,4 @@
-# MCU Malloc Tracker (v0.1.0)
+# MCU Malloc Tracker (v2.0.0)
 
 ![C99](https://img.shields.io/badge/C-99-blue?style=flat-square)
 ![License MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)
@@ -208,7 +208,7 @@ See `docs/DESIGN.md` for rationale behind key decisions.
 
 ## Status
 
-**v0.1.0** — Snapshot workflow is stable and demonstrated. Binary format frozen. Core library tested and working.
+**v2.0.0** - Snapshot workflow is stable and demonstrated. Binary format frozen. Core library tested and working.
 
 MTV1 live streaming support is experimental; snapshot workflow is recommended for production use.
 

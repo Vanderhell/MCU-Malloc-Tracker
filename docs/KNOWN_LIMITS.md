@@ -214,7 +214,7 @@ python3 tools/mt_decode.py snapshot.bin
 ERROR: CRC mismatch (calculated != stored)
 ```
 
-**Known issue**: The snapshot example (generate_snapshot) in v0.1.0 has a minor CRC calculation discrepancy. The format is correct and the decoder works perfectly on the golden test vector (`tools/_vectors/phase5_crc_snapshot.bin` decodes with CRC OK).
+**Known issue**: The snapshot example (generate_snapshot) before v2.0.0 has a minor CRC calculation discrepancy. The format is correct and the decoder works perfectly on the golden test vector (`tools/_vectors/phase5_crc_snapshot.bin` decodes with CRC OK).
 
 **Likely causes**:
 - Snapshot buffer was overwritten during capture
